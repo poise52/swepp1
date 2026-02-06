@@ -7,6 +7,7 @@ export interface GameSettings {
   showQuestionMarks: boolean
   enableChord: boolean
   scale: number
+  devMode: boolean
 }
 
 const STORAGE_KEY = 'minesweeper-settings'
@@ -15,7 +16,8 @@ const defaultSettings: GameSettings = {
   fieldGeneration: 'safe-start',
   showQuestionMarks: true,
   enableChord: true,
-  scale: 100
+  scale: 100,
+  devMode: false
 }
 
 const loadSettings = (): GameSettings => {

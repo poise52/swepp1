@@ -29,36 +29,38 @@
           </span>
         </label>
 
-        <label
-            class="ms-menu__radio ms-menu__radio--diff"
-            :class="{ 'ms-menu__radio--selected': selectedDifficulty === 'custom' }"
-        >
-          <input
-              type="radio"
-              name="difficulty"
-              value="custom"
-              v-model="selectedDifficulty"
-          />
-          <span class="ms-menu__radio-mark"></span>
-          <span class="ms-menu__radio-content">
-            <span class="ms-menu__radio-label">Своя</span>
-            <span v-if="selectedDifficulty !== 'custom'" class="ms-menu__radio-info">настроить размер</span>
-          </span>
+        <div class="ms-menu__custom-difficulty">
+          <label
+              class="ms-menu__radio ms-menu__radio--diff"
+              :class="{ 'ms-menu__radio--selected': selectedDifficulty === 'custom' }"
+          >
+            <input
+                type="radio"
+                name="difficulty"
+                value="custom"
+                v-model="selectedDifficulty"
+            />
+            <span class="ms-menu__radio-mark"></span>
+            <span class="ms-menu__radio-content">
+              <span class="ms-menu__radio-label">Своя</span>
+              <span v-if="selectedDifficulty !== 'custom'" class="ms-menu__radio-info">настроить размер</span>
+            </span>
+          </label>
           <div v-if="selectedDifficulty === 'custom'" class="ms-menu__custom-inline">
             <div class="ms-menu__inline-field">
               <label>Ширина:</label>
-              <input type="number" v-model.number="customCols" :min="MIN_SIZE" :max="MAX_SIZE" @click.stop />
+              <input type="number" v-model.number="customCols" :min="MIN_SIZE" :max="MAX_SIZE" />
             </div>
             <div class="ms-menu__inline-field">
               <label>Высота:</label>
-              <input type="number" v-model.number="customRows" :min="MIN_SIZE" :max="MAX_SIZE" @click.stop />
+              <input type="number" v-model.number="customRows" :min="MIN_SIZE" :max="MAX_SIZE" />
             </div>
             <div class="ms-menu__inline-field">
               <label>Мины:</label>
-              <input type="number" v-model.number="customMines" :min="MIN_MINES" :max="maxMines" @click.stop />
+              <input type="number" v-model.number="customMines" :min="MIN_MINES" :max="maxMines" />
             </div>
           </div>
-        </label>
+        </div>
       </div>
     </div>
 
@@ -94,6 +96,11 @@
               <input type="checkbox" v-model="settings.enableChord" />
               <span class="ms-menu__checkbox-mark"></span>
               <span class="ms-menu__checkbox-label">Разоружение</span>
+            </label>
+            <label class="ms-menu__checkbox">
+              <input type="checkbox" v-model="settings.devMode" />
+              <span class="ms-menu__checkbox-mark"></span>
+              <span class="ms-menu__checkbox-label">Режим разработчика</span>
             </label>
           </div>
         </div>

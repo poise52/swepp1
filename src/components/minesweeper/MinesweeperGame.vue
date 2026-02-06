@@ -15,8 +15,12 @@
         :board="board"
         :game-status="gameStatus"
         :cols="cols"
+        :highlighted-cells="highlightedCells"
+        :dev-mode="settings.devMode"
         @cell-open="handleCellOpen"
         @cell-mark="handleCellMark"
+        @cell-highlight="highlightNeighbors"
+        @clear-highlight="clearHighlight"
     />
   </div>
 </template>
@@ -39,12 +43,16 @@ const {
   flagsCount,
   time,
   cols,
+  rows,
   seed,
+  highlightedCells,
   initGame,
   openCell,
   cycleMark,
   restartGame,
-  newGame
+  newGame,
+  highlightNeighbors,
+  clearHighlight
 } = useMinesweeper()
 
 const minesLeft = computed(() => minesCount.value - flagsCount.value)
@@ -59,7 +67,7 @@ const gameClass = computed(() => {
 
 const gameStyle = computed(() => ({
   transform: `scale(${settings.value.scale / 100})`,
-  transformOrigin: 'center center'
+  transformOrigin: 'top center'
 }))
 
 const handleCellOpen = (row: number, col: number) => {

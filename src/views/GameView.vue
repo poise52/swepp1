@@ -1,0 +1,10 @@
+<template>
+  <MainLayout>
+    <MinesweeperGame />
+  </MainLayout>
+</template>
+
+<script setup lang="ts">
+import MainLayout from '@/layouts/MainLayout.vue'
+import MinesweeperGame from '@/components/minesweeper/MinesweeperGame.vue'
+</script>

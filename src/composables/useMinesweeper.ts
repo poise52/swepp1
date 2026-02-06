@@ -22,6 +22,7 @@ export interface MinesweeperState {
   rows: Ref<number>
   cols: Ref<number>
   seed: Ref<number>
+  highlightedCells: Ref<Set<string>>
 }
 
 export interface MinesweeperActions {
@@ -30,6 +31,8 @@ export interface MinesweeperActions {
   cycleMark: (row: number, col: number, settings?: GameSettings) => void
   restartGame: () => void
   newGame: () => void
+  highlightNeighbors: (row: number, col: number) => void
+  clearHighlight: () => void
 }
 
 function createSeededRandom(seed: number) {
@@ -49,6 +52,7 @@ export function useMinesweeper(): MinesweeperState & MinesweeperActions {
   const rows = ref(0)
   const cols = ref(0)
   const seed = ref(0)
+  const highlightedCells = ref<Set<string>>(new Set())
 
   let timerInterval: number | null = null
   let firstClick = true
@@ -246,6 +250,16 @@ export function useMinesweeper(): MinesweeperState & MinesweeperActions {
 
       const neighbors = getNeighbors(row, col)
       const flaggedCount = neighbors.filter(n => n.mark === 'flag').length
+      const closedUnflaggedCount = neighbors.filter(n => !n.isOpen && n.mark !== 'flag').length
+
+      if (closedUnflaggedCount === cell.adjacentMines - flaggedCount && closedUnflaggedCount > 0) {
+        for (const neighbor of neighbors) {
+          if (!neighbor.isOpen && neighbor.mark !== 'flag') {
+            neighbor.mark = 'flag'
+          }
+        }
+        return
+      }
 
       if (flaggedCount === cell.adjacentMines) {
         for (const neighbor of neighbors) {
@@ -271,6 +285,9 @@ export function useMinesweeper(): MinesweeperState & MinesweeperActions {
     }
 
     if (cell.isMine) {
+      if (effectiveSettings?.devMode) {
+        return
+      }
       cell.isOpen = true
       revealAllMines()
       gameStatus.value = 'lost'
@@ -308,6 +325,24 @@ export function useMinesweeper(): MinesweeperState & MinesweeperActions {
     initGame(rows.value, cols.value, minesCount.value)
   }
 
+  const highlightNeighbors = (row: number, col: number) => {
+    const cell = board.value[row][col]
+    if (!cell.isOpen || cell.adjacentMines === 0) return
+
+    highlightedCells.value.clear()
+    const neighbors = getNeighbors(row, col)
+
+    for (const neighbor of neighbors) {
+      if (!neighbor.isOpen && neighbor.mark !== 'flag') {
+        highlightedCells.value.add(`${neighbor.row}-${neighbor.col}`)
+      }
+    }
+  }
+
+  const clearHighlight = () => {
+    highlightedCells.value.clear()
+  }
+
   return {
     board,
     gameStatus,
@@ -317,10 +352,13 @@ export function useMinesweeper(): MinesweeperState & MinesweeperActions {
     rows,
     cols,
     seed,
+    highlightedCells,
     initGame,
     openCell,
     cycleMark,
     restartGame,
-    newGame
+    newGame,
+    highlightNeighbors,
+    clearHighlight
   }
 }
