@@ -32,6 +32,9 @@ export interface GameRecord {
   seed: number
   won: boolean
   createdAt: string
+  user?: {
+    username: string
+  }
 }
 
 export interface RecordsResponse {

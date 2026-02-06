@@ -1,5 +1,5 @@
 <template>
-  <MinesweeperMenu v-if="showMenu" @start="startGame" />
+  <MinesweeperMenu v-if="showMenu" @start="handleStart" />
 
   <div v-else :class="gameClass" :style="gameStyle">
     <MinesweeperHeader
@@ -26,14 +26,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useMinesweeper } from '@/composables/useMinesweeper'
 import { useSettings } from '@/composables/useSettings'
+import { api } from '@/services/api'
+import { store } from '@/store'
 import MinesweeperMenu from './MinesweeperMenu.vue'
 import MinesweeperHeader from './MinesweeperHeader.vue'
 import MinesweeperBoard from './MinesweeperBoard.vue'
 
 const showMenu = ref(true)
+const currentDifficulty = ref('Новичок')
 const { settings } = useSettings()
 
 const {
@@ -78,12 +81,31 @@ const handleCellMark = (row: number, col: number) => {
   cycleMark(row, col, settings.value)
 }
 
-const startGame = (rows: number, colsCount: number, mines: number, customSeed?: number) => {
-  initGame(rows, colsCount, mines, customSeed, settings.value)
+const handleStart = (rowsCount: number, colsCount: number, mines: number, difficulty: string, customSeed?: number) => {
+  currentDifficulty.value = difficulty
+  initGame(rowsCount, colsCount, mines, customSeed, settings.value)
   showMenu.value = false
 }
 
 const backToMenu = () => {
   showMenu.value = true
 }
+
+watch(gameStatus, async (status) => {
+  if (status === 'won' && store.getters.isAuthenticated) {
+    try {
+      await api.saveGameRecord({
+        difficulty: currentDifficulty.value,
+        rows: rows.value,
+        cols: cols.value,
+        mines: minesCount.value,
+        time: time.value,
+        seed: seed.value,
+        won: true
+      })
+    } catch (err) {
+      console.error('Failed to save record:', err)
+    }
+  }
+})
 </script>

@@ -158,7 +158,7 @@ const difficulties: Difficulty[] = [
 ]
 
 const emit = defineEmits<{
-  start: [rows: number, cols: number, mines: number, seed?: number]
+  start: [rows: number, cols: number, mines: number, difficulty: string, seed?: number]
 }>()
 
 const selectedDifficulty = ref('Новичок')
@@ -189,6 +189,7 @@ const isValid = computed(() => {
 
 const startGame = () => {
   let rows: number, cols: number, mines: number
+  const difficulty = selectedDifficulty.value === 'custom' ? 'Своя' : selectedDifficulty.value
 
   if (selectedDifficulty.value === 'custom') {
     rows = customRows.value
@@ -202,6 +203,6 @@ const startGame = () => {
   }
 
   const seed = customSeed.value ? parseInt(customSeed.value) : undefined
-  emit('start', rows, cols, mines, seed)
+  emit('start', rows, cols, mines, difficulty, seed)
 }
 </script>

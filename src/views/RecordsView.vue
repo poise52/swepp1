@@ -21,7 +21,7 @@
         <div v-for="(record, index) in records" :key="record.id" class="records__item">
           <div class="records__rank">{{ index + 1 }}</div>
           <div class="records__info">
-            <div class="records__username">{{ record.userId }}</div>
+            <div class="records__username">{{ record.user?.username || 'Аноним' }}</div>
             <div class="records__meta">
               {{ record.cols }}×{{ record.rows }} · {{ record.mines }} мин
             </div>
