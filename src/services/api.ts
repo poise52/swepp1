@@ -154,6 +154,19 @@ class ApiService {
     await this.client.post(`/online/matches/${matchId}/finish`, { winnerId })
   }
 
+  async patchOnlineLobbySettings(
+    lobbyId: string,
+    payload: Partial<{ rows: number; cols: number; mines: number; seed: number }>
+  ): Promise<OnlineLobby> {
+    const response = await this.client.patch<OnlineLobby>(`/online/lobbies/${lobbyId}/settings`, payload)
+    return response.data
+  }
+
+  async prepareOnlineLobbyNextRound(lobbyId: string): Promise<OnlineLobby> {
+    const response = await this.client.post<OnlineLobby>(`/online/lobbies/${lobbyId}/next-round`)
+    return response.data
+  }
+
   async getOpponentState(matchId: string): Promise<{ opponentGameId: string; board: MinesweeperGameState['board']; gameStatus: GameStatus }> {
     const response = await this.client.get(`/online/matches/${matchId}/opponent-state`)
     return response.data

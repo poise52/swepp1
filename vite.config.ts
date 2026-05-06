@@ -11,7 +11,8 @@ export default defineConfig({
       '@': resolve(__dirname, 'src'),
     },
   },
-  base: '/swepp1/',
+  // '/' — деплой на VPS / домен в корне. Для GitHub Pages в подкаталоге задайте VITE_BASE=/swepp1/ перед build.
+  base: process.env.VITE_BASE || '/',
   build: {
     outDir: 'dist',
   },

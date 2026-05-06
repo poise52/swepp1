@@ -127,7 +127,7 @@
               <span class="ms-menu__checkbox-mark"></span>
               <span class="ms-menu__checkbox-label">Разоружение</span>
             </label>
-            <label class="ms-menu__checkbox">
+            <label v-if="canUseDevTools" class="ms-menu__checkbox">
               <input type="checkbox" v-model="settings.devMode" />
               <span class="ms-menu__checkbox-mark"></span>
               <span class="ms-menu__checkbox-label">Режим разработчика</span>
@@ -200,11 +200,18 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { useStore } from 'vuex'
 import { useTheme } from '@/composables/useTheme'
 import { useSettings } from '@/composables/useSettings'
 
+const store = useStore()
 const { theme, toggleTheme } = useTheme()
 const { settings } = useSettings()
+
+const canUseDevTools = computed(() => {
+  const r = store.getters.currentUser?.role as string | undefined
+  return r === 'admin' || r === 'superuser'
+})
 
 interface Difficulty {
   name: string

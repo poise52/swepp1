@@ -56,6 +56,9 @@
             >
               {{ p.ready ? 'Готов' : 'Ожидание' }}
             </span>
+            <span v-if="disconnectedPeerIds.includes(p.userId)" class="ms-lobby-player__tag ms-lobby-player__tag--dc">
+              Отключился
+            </span>
           </div>
         </li>
         <li v-if="onlineLobby!.players.length < 2" class="ms-lobby-player ms-lobby-player--empty">
@@ -65,6 +68,24 @@
           </div>
         </li>
       </ul>
+
+      <div v-if="isLobbyHost" class="ms-lobby-card__settings">
+        <div class="ms-lobby-card__section-title">Следующая игра (хост)</div>
+        <p v-if="onlineLobby!.mode === 'ranked'" class="ms-lobby-card__hint-ranked">
+          В рейтинге после «Применить» сид пересчитает сервер.
+        </p>
+        <div class="ms-lobby-card__fields">
+          <label class="ms-lobby-field">Ширина <input v-model.number="hostEdit.cols" type="number" min="5" max="50" /></label>
+          <label class="ms-lobby-field">Высота <input v-model.number="hostEdit.rows" type="number" min="5" max="50" /></label>
+          <label class="ms-lobby-field">Мины <input v-model.number="hostEdit.mines" type="number" min="1" /></label>
+          <label v-if="onlineLobby!.mode === 'casual'" class="ms-lobby-field">
+            Сид <input v-model.number="hostEdit.seed" type="number" />
+          </label>
+        </div>
+        <button type="button" class="ms-menu__btn" :disabled="isSavingLobbySettings" @click="saveLobbySettings">
+          Применить настройки
+        </button>
+      </div>
 
       <div class="ms-lobby-card__actions">
         <div class="ms-lobby-card__actions-row">
@@ -90,12 +111,16 @@
       <button type="button" class="ms-menu__btn" @click="toggleSwapView">
         {{ viewingOpponent ? 'Моё поле' : 'Поле соперника' }}
       </button>
+      <button type="button" class="ms-menu__btn" :disabled="isSyncingOnline || !gameId" @click="syncOnlineField">
+        Синхронизировать поле
+      </button>
     </div>
     <MinesweeperHeader
         :mines-left="minesLeft"
         :time="time"
         :game-status="gameStatus"
         :seed="seed"
+        :game-controls-allowed="!onlineMatchId"
         @restart="restartGame"
         @new-game="newGame"
         @back="backToMenu"
@@ -105,13 +130,25 @@
         :game-status="gameStatus"
         :cols="cols"
         :highlighted-cells="highlightedCells"
-        :dev-mode="settings.devMode"
+        :dev-mode="effectiveDevMode"
         @cell-open="handleCellOpen"
         @cell-mark="handleCellMark"
         @cell-highlight="highlightNeighbors"
         @clear-highlight="clearHighlight"
     />
   </div>
+
+  <Teleport to="body">
+    <div v-if="matchEndVisible" class="ms-match-end-overlay" role="presentation" @click.self="matchEndVisible = false">
+      <div class="ms-match-end-modal" role="dialog" aria-labelledby="match-end-title">
+        <h3 id="match-end-title">{{ matchEndHeadline }}</h3>
+        <p v-if="onlineLobby" class="ms-match-end-sub">{{ onlineLobby.mode === 'ranked' ? 'Рейтинг обновится у обоих.' : '' }}</p>
+        <button type="button" class="ms-menu__btn ms-menu__btn--start" @click="backToLobbyAfterMatch">
+          В лобби
+        </button>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -146,10 +183,47 @@ const opponentBoard = ref<MinesweeperCell[][]>([])
 const viewingOpponent = ref(false)
 const copyFeedback = ref('')
 let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
+const disconnectedPeerIds = ref<string[]>([])
+const matchEndVisible = ref(false)
+const matchEndWinnerId = ref<string | null>(null)
+const isSavingLobbySettings = ref(false)
+const isSyncingOnline = ref(false)
+const hostEdit = ref({ rows: 9, cols: 9, mines: 10, seed: 0 })
 
 const myUserId = computed(() => store.getters.currentUser?.id || '')
 
 const isLobbyPhase = computed(() => !!onlineLobby.value && !onlineMatchId.value)
+
+const effectiveDevMode = computed(() => {
+  const r = store.getters.currentUser?.role as string | undefined
+  if (r === 'admin' || r === 'superuser') return settings.value.devMode
+  return false
+})
+
+const isLobbyHost = computed(() => onlineLobby.value?.players?.[0]?.userId === myUserId.value && !!myUserId.value)
+
+const opponentUserId = computed(
+  () => onlineLobby.value?.players.find((p) => p.userId !== myUserId.value)?.userId ?? ''
+)
+
+const matchEndHeadline = computed(() => {
+  const w = matchEndWinnerId.value
+  if (!w) return 'Матч завершён'
+  if (w === myUserId.value) return 'Вы победили'
+  const name = onlineLobby.value?.players.find((p) => p.userId === w)?.username
+  return name ? `Победил(а): ${name}` : 'Вы проиграли'
+})
+
+const syncHostEditor = () => {
+  const lob = onlineLobby.value
+  if (!lob) return
+  hostEdit.value = {
+    rows: lob.rows,
+    cols: lob.cols,
+    mines: lob.mines,
+    seed: lob.seed
+  }
+}
 
 const flashCopyFeedback = (message: string) => {
   copyFeedback.value = message
@@ -194,6 +268,33 @@ const canStartMatch = computed(() => {
   const allReady = onlineLobby.value.players.length === 2 && onlineLobby.value.players.every(p => p.ready)
   return allReady && onlineLobby.value.players[0]?.userId === myUserId.value
 })
+
+const saveLobbySettings = async () => {
+  if (!onlineLobby.value || !isLobbyHost.value) return
+  isSavingLobbySettings.value = true
+  try {
+    const payload: { rows: number; cols: number; mines: number; seed?: number } = {
+      rows: hostEdit.value.rows,
+      cols: hostEdit.value.cols,
+      mines: hostEdit.value.mines
+    }
+    if (onlineLobby.value.mode === 'casual') {
+      payload.seed = hostEdit.value.seed
+    }
+    onlineLobby.value = await api.patchOnlineLobbySettings(onlineLobby.value.id, payload)
+    lastParams.value = {
+      rows: onlineLobby.value.rows,
+      cols: onlineLobby.value.cols,
+      mines: onlineLobby.value.mines,
+      seed: onlineLobby.value.seed
+    }
+    syncHostEditor()
+  } catch (e) {
+    console.error(e)
+  } finally {
+    isSavingLobbySettings.value = false
+  }
+}
 
 const flagsCount = computed(() => board.value.flat().filter(cell => cell.mark === 'flag').length)
 
@@ -240,25 +341,34 @@ const createGame = async (params: { rows: number; cols: number; mines: number; s
 
 const connectLobbyWs = (lobbyId: string) => {
   onlineWs.value?.close()
+  disconnectedPeerIds.value = []
   const ws = new WebSocket(api.getOnlineWsUrl(lobbyId))
   ws.onmessage = async (evt) => {
     try {
       const msg = JSON.parse(evt.data)
       if (msg.event === 'lobby_updated') {
         onlineLobby.value = msg.payload as OnlineLobby
+        syncHostEditor()
       } else if (msg.event === 'match_started') {
         const started = msg.payload as StartMatchResponse
         if (!onlineMatchId.value) {
           onlineMatchId.value = started.matchId
           gameId.value = started.myGameId
-          const myState = await api.getMinesweeperGame(started.myGameId, settings.value.devMode)
+          const myState = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
           applyGameState(myState)
           await refreshOpponentState()
         }
       } else if (msg.event === 'player_move' && onlineMatchId.value) {
         await refreshOpponentState()
       } else if (msg.event === 'match_finished') {
-        console.log('Match finished', msg.payload)
+        const winnerId = msg.payload?.winnerId as string | undefined
+        matchEndWinnerId.value = winnerId ?? null
+        matchEndVisible.value = true
+      } else if (msg.event === 'player_disconnected') {
+        const uid = msg.payload?.userId as string | undefined
+        if (uid && !disconnectedPeerIds.value.includes(uid)) {
+          disconnectedPeerIds.value = [...disconnectedPeerIds.value, uid]
+        }
       }
     } catch (e) {
       console.error('WS parse error', e)
@@ -291,7 +401,6 @@ const handleCellOpen = async (row: number, col: number) => {
     applyGameState(state)
     if (onlineMatchId.value) {
       await api.sendOnlineMove(onlineMatchId.value, row, col, 'reveal')
-      await refreshOpponentState()
     }
   } catch (err) {
     if (!isIgnorableGameError(err) && !isLeavingGame.value) {
@@ -311,7 +420,6 @@ const handleCellMark = async (row: number, col: number) => {
     applyGameState(state)
     if (onlineMatchId.value) {
       await api.sendOnlineMove(onlineMatchId.value, row, col, 'mark')
-      await refreshOpponentState()
     }
   } catch (err) {
     if (!isIgnorableGameError(err) && !isLeavingGame.value) {
@@ -355,6 +463,7 @@ const handleOnlineCreate = async (
   })
   onlineLobby.value = lobby
   lastParams.value = { rows: rowsCount, cols: colsCount, mines, seed: lobby.seed }
+  syncHostEditor()
   showMenu.value = false
   connectLobbyWs(lobby.id)
 }
@@ -364,6 +473,7 @@ const handleOnlineJoin = async (invite: string) => {
   const lobby = await api.joinOnlineLobby(payload)
   onlineLobby.value = lobby
   lastParams.value = { rows: lobby.rows, cols: lobby.cols, mines: lobby.mines, seed: lobby.seed }
+  syncHostEditor()
   showMenu.value = false
   connectLobbyWs(lobby.id)
 }
@@ -378,13 +488,52 @@ const startOnlineMatch = async () => {
   const started = await api.startOnlineMatch(onlineLobby.value.id)
   onlineMatchId.value = started.matchId
   gameId.value = started.myGameId
-  const state = await api.getMinesweeperGame(started.myGameId, settings.value.devMode)
+  const state = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
   applyGameState(state)
   await refreshOpponentState()
 }
 
 const toggleSwapView = () => {
   viewingOpponent.value = !viewingOpponent.value
+}
+
+const syncOnlineField = async () => {
+  if (!gameId.value || !onlineMatchId.value) return
+  isSyncingOnline.value = true
+  try {
+    const myState = await api.getMinesweeperGame(gameId.value, effectiveDevMode.value)
+    applyGameState(myState)
+    await refreshOpponentState()
+  } catch (e) {
+    console.error(e)
+  } finally {
+    isSyncingOnline.value = false
+  }
+}
+
+const backToLobbyAfterMatch = async () => {
+  matchEndVisible.value = false
+  matchEndWinnerId.value = null
+  if (!onlineLobby.value?.id) return
+  try {
+    const refreshed = await api.prepareOnlineLobbyNextRound(onlineLobby.value.id)
+    onlineLobby.value = refreshed
+    syncHostEditor()
+  } catch (e) {
+    console.error(e)
+    return
+  }
+  onlineMatchId.value = null
+  viewingOpponent.value = false
+  opponentBoard.value = []
+  gameId.value = null
+  board.value = []
+  gameStatus.value = 'idle'
+  minesCount.value = 0
+  time.value = 0
+  rows.value = 0
+  cols.value = 0
+  seed.value = 0
 }
 
 const backToMenu = async () => {
@@ -411,6 +560,7 @@ const backToMenu = async () => {
 }
 
 const restartGame = async () => {
+  if (onlineMatchId.value) return
   if (!lastParams.value) return
   await createGame({
     rows: lastParams.value.rows,
@@ -421,6 +571,7 @@ const restartGame = async () => {
 }
 
 const newGame = async () => {
+  if (onlineMatchId.value) return
   if (!lastParams.value) return
   await createGame({
     rows: lastParams.value.rows,
@@ -460,9 +611,13 @@ const clearHighlight = () => {
 }
 
 watch(gameStatus, async (status) => {
-  if (status === 'won' && onlineMatchId.value && myUserId.value) {
+  if (onlineMatchId.value && myUserId.value) {
     try {
-      await api.finishOnlineMatch(onlineMatchId.value, myUserId.value)
+      if (status === 'won') {
+        await api.finishOnlineMatch(onlineMatchId.value, myUserId.value)
+      } else if (status === 'lost' && opponentUserId.value) {
+        await api.finishOnlineMatch(onlineMatchId.value, opponentUserId.value)
+      }
     } catch (err) {
       console.error('Failed to finish online match:', err)
     }
@@ -484,3 +639,80 @@ watch(gameStatus, async (status) => {
   }
 })
 </script>
+
+<style scoped>
+.ms-online-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+}
+
+.ms-lobby-card__settings {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--ms-border, rgba(255, 255, 255, 0.12));
+}
+
+.ms-lobby-card__hint-ranked {
+  font-size: 0.85rem;
+  opacity: 0.85;
+  margin: 0 0 0.5rem;
+}
+
+.ms-lobby-card__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.ms-lobby-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.ms-lobby-field input {
+  min-width: 4rem;
+}
+
+.ms-lobby-player__tag--dc {
+  opacity: 0.9;
+  background: rgba(200, 120, 80, 0.25);
+}
+
+.ms-match-end-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.ms-match-end-modal {
+  background: var(--ms-menu-bg, #1e1e1e);
+  color: var(--ms-text-primary, #fff);
+  padding: 1.25rem 1.5rem;
+  border-radius: 12px;
+  max-width: min(90vw, 22rem);
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+}
+
+.ms-match-end-modal h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.1rem;
+}
+
+.ms-match-end-sub {
+  margin: 0 0 1rem;
+  font-size: 0.88rem;
+  opacity: 0.85;
+  min-height: 1rem;
+}
+</style>

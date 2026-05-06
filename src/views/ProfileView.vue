@@ -26,6 +26,11 @@
             {{ currentUser?.worldRank ? `Топ ${currentUser.worldRank}` : 'Нет ранга' }}
           </span>
         </div>
+        <div v-if="currentUser?.role === 'superuser'" class="profile__field profile__field--token">
+          <span class="profile__label">Сессия (token):</span>
+          <button type="button" class="profile__token-btn" @click="toggleToken">{{ showRawToken ? 'Скрыть' : 'Показать' }}</button>
+          <pre v-if="showRawToken" class="profile__token-pre">{{ storedToken }}</pre>
+        </div>
       </div>
 
       <h3 class="profile__subtitle">Мои рекорды</h3>
@@ -60,6 +65,12 @@ import type { GameRecord } from '@/types/api'
 
 const store = useStore()
 const currentUser = computed(() => store.getters.currentUser)
+const storedToken = computed(() => localStorage.getItem('auth_token') || '')
+const showRawToken = ref(false)
+
+const toggleToken = () => {
+  showRawToken.value = !showRawToken.value
+}
 
 const records = ref<GameRecord[]>([])
 const isLoading = ref(false)
@@ -124,6 +135,34 @@ onMounted(loadRecords)
     background: var(--ms-menu-form-bg);
     border-radius: 8px;
     margin-bottom: 8px;
+  }
+
+  &__field--token {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  &__token-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    background: var(--ms-accent, #6366f1);
+    color: #fff;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  &__token-pre {
+    margin: 0;
+    padding: 10px;
+    width: 100%;
+    overflow-x: auto;
+    word-break: break-all;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 6px;
   }
 
   &__label {
