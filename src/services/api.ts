@@ -7,7 +7,10 @@ import type {
   RecordsResponse,
   User,
   MinesweeperGameState,
-  MinesweeperSettingsPayload
+  MinesweeperSettingsPayload,
+  OnlineLobby,
+  StartMatchResponse,
+  GameStatus
 } from '@/types/api'
 
 class ApiService {
@@ -109,6 +112,58 @@ class ApiService {
 
   async deleteMinesweeperGame(gameId: string): Promise<void> {
     await this.client.delete(`/minesweeper/games/${gameId}`)
+  }
+
+  async createOnlineLobby(payload: {
+    mode: 'casual' | 'ranked'
+    rows: number
+    cols: number
+    mines: number
+    seed?: number
+    settings: MinesweeperSettingsPayload
+  }): Promise<OnlineLobby> {
+    const response = await this.client.post<OnlineLobby>('/online/lobbies', payload)
+    return response.data
+  }
+
+  async joinOnlineLobby(payload: { inviteCode?: string; inviteLink?: string }): Promise<OnlineLobby> {
+    const response = await this.client.post<OnlineLobby>('/online/lobbies/join', payload)
+    return response.data
+  }
+
+  async getOnlineLobby(lobbyId: string): Promise<OnlineLobby> {
+    const response = await this.client.get<OnlineLobby>(`/online/lobbies/${lobbyId}`)
+    return response.data
+  }
+
+  async setOnlineReady(lobbyId: string, ready: boolean): Promise<OnlineLobby> {
+    const response = await this.client.post<OnlineLobby>(`/online/lobbies/${lobbyId}/ready`, { ready })
+    return response.data
+  }
+
+  async startOnlineMatch(lobbyId: string): Promise<StartMatchResponse> {
+    const response = await this.client.post<StartMatchResponse>(`/online/lobbies/${lobbyId}/start`)
+    return response.data
+  }
+
+  async sendOnlineMove(matchId: string, row: number, col: number, action: 'reveal' | 'mark'): Promise<void> {
+    await this.client.post(`/online/matches/${matchId}/moves`, { row, col, action })
+  }
+
+  async finishOnlineMatch(matchId: string, winnerId: string): Promise<void> {
+    await this.client.post(`/online/matches/${matchId}/finish`, { winnerId })
+  }
+
+  async getOpponentState(matchId: string): Promise<{ opponentGameId: string; board: MinesweeperGameState['board']; gameStatus: GameStatus }> {
+    const response = await this.client.get(`/online/matches/${matchId}/opponent-state`)
+    return response.data
+  }
+
+  getOnlineWsUrl(lobbyId: string): string {
+    const token = localStorage.getItem('auth_token') || ''
+    const apiBase = (import.meta.env.VITE_API_URL || 'http://localhost:3000/api').replace(/\/api$/, '')
+    const wsBase = apiBase.replace(/^http/, 'ws')
+    return `${wsBase}/api/online/lobbies/${lobbyId}/ws?token=${encodeURIComponent(token)}`
   }
 }
 

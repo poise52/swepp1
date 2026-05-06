@@ -78,3 +78,35 @@ export interface MinesweeperGameState {
   seed: number
   time: number
 }
+
+export interface LobbyPlayer {
+  userId: string
+  username: string
+  ready: boolean
+}
+
+export interface OnlineLobby {
+  id: string
+  inviteCode: string
+  inviteLink: string
+  mode: 'casual' | 'ranked'
+  rows: number
+  cols: number
+  mines: number
+  seed: number
+  algorithmVersion: number
+  status: string
+  players: LobbyPlayer[]
+}
+
+export interface StartMatchResponse {
+  matchId: string
+  myGameId: string
+  opponentGameId: string
+  seed: number
+  rows: number
+  cols: number
+  mines: number
+  mode: string
+  algorithmVersion: number
+}
