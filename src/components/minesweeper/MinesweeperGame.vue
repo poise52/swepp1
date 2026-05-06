@@ -125,26 +125,27 @@
           @back="backToMenu"
       />
       <div class="ms-duel">
+        <!-- Слева всегда игрок 1 (owner лобби), справа игрок 2 — как на сервере; данные в разных ref, без swap одной доски. -->
         <div class="ms-duel-col ms-duel-col--host" :class="{ 'ms-duel-col--interactive': isLobbyHost }">
           <div class="ms-duel-caption">
             {{ hostSeatName }}
             <span v-if="isLobbyHost" class="ms-duel-caption__you"> (вы)</span>
             <span class="ms-duel-caption__meta">
-              · мин {{ hostSeatMinesLeft }} · {{ hostSeatStatusLabel }}
+              · мин {{ player1MinesLeft }} · {{ player1StatusLabel }}
             </span>
           </div>
           <MinesweeperBoard
-              :key="`seat-host-${onlineMatchId}`"
-              :board="hostSeatBoard"
-              :game-status="hostSeatGameStatus"
+              :key="`p1-${onlineMatchId}`"
+              :board="player1Board"
+              :game-status="player1GameStatus"
               :cols="cols"
               :highlighted-cells="isLobbyHost ? highlightedCells : emptyHighlightSet"
               :dev-mode="isLobbyHost ? effectiveDevMode : false"
               :read-only="!isLobbyHost"
-              @cell-open="(r, c) => onDuelCellOpen('host', r, c)"
-              @cell-mark="(r, c) => onDuelCellMark('host', r, c)"
-              @cell-highlight="(r, c) => onDuelCellHighlight('host', r, c)"
-              @clear-highlight="() => onDuelClearHighlight('host')"
+              @cell-open="(r, c) => onDuelCellOpen('p1', r, c)"
+              @cell-mark="(r, c) => onDuelCellMark('p1', r, c)"
+              @cell-highlight="(r, c) => onDuelCellHighlight('p1', r, c)"
+              @clear-highlight="() => onDuelClearHighlight('p1')"
           />
         </div>
         <div class="ms-duel-col ms-duel-col--guest" :class="{ 'ms-duel-col--interactive': !isLobbyHost }">
@@ -152,21 +153,21 @@
             {{ guestSeatName }}
             <span v-if="!isLobbyHost" class="ms-duel-caption__you"> (вы)</span>
             <span class="ms-duel-caption__meta">
-              · мин {{ guestSeatMinesLeft }} · {{ guestSeatStatusLabel }}
+              · мин {{ player2MinesLeft }} · {{ player2StatusLabel }}
             </span>
           </div>
           <MinesweeperBoard
-              :key="`seat-guest-${onlineMatchId}`"
-              :board="guestSeatBoard"
-              :game-status="guestSeatGameStatus"
+              :key="`p2-${onlineMatchId}`"
+              :board="player2Board"
+              :game-status="player2GameStatus"
               :cols="cols"
               :highlighted-cells="!isLobbyHost ? highlightedCells : emptyHighlightSet"
               :dev-mode="!isLobbyHost ? effectiveDevMode : false"
               :read-only="isLobbyHost"
-              @cell-open="(r, c) => onDuelCellOpen('guest', r, c)"
-              @cell-mark="(r, c) => onDuelCellMark('guest', r, c)"
-              @cell-highlight="(r, c) => onDuelCellHighlight('guest', r, c)"
-              @clear-highlight="() => onDuelClearHighlight('guest')"
+              @cell-open="(r, c) => onDuelCellOpen('p2', r, c)"
+              @cell-mark="(r, c) => onDuelCellMark('p2', r, c)"
+              @cell-highlight="(r, c) => onDuelCellHighlight('p2', r, c)"
+              @clear-highlight="() => onDuelClearHighlight('p2')"
           />
         </div>
       </div>
@@ -237,8 +238,11 @@ const isLeavingGame = ref(false)
 const onlineLobby = ref<OnlineLobby | null>(null)
 const onlineMatchId = ref<string | null>(null)
 const onlineWs = ref<WebSocket | null>(null)
-const opponentBoard = ref<MinesweeperCell[][]>([])
-const opponentGameStatus = ref<GameStatus>('playing')
+/** Игрок 1 / 2 строго как в online_matches (player1 = первый в лобби = owner). Никакого swap с «моей» доской. */
+const player1Board = ref<MinesweeperCell[][]>([])
+const player2Board = ref<MinesweeperCell[][]>([])
+const player1GameStatus = ref<GameStatus>('idle')
+const player2GameStatus = ref<GameStatus>('idle')
 /** Соперник из лобби на момент старта — чтобы finish не терялся, если WS-лобби устарело. */
 const pinnedOpponentUserId = ref('')
 const emptyHighlightSet = new Set<string>()
@@ -307,27 +311,19 @@ const gameStatusRu = (s: GameStatus) => {
   }
 }
 
-const hostSeatBoard = computed(() => (isLobbyHost.value ? board.value : opponentBoard.value))
-
-const guestSeatBoard = computed(() => (isLobbyHost.value ? opponentBoard.value : board.value))
-
-const hostSeatGameStatus = computed(() => (isLobbyHost.value ? gameStatus.value : opponentGameStatus.value))
-
-const guestSeatGameStatus = computed(() => (isLobbyHost.value ? opponentGameStatus.value : gameStatus.value))
-
 const minesLeftForBoard = (b: MinesweeperCell[][]) => {
   if (!b.length || !minesCount.value) return minesCount.value
   const flags = b.flat().filter((c) => c.mark === 'flag').length
   return minesCount.value - flags
 }
 
-const hostSeatMinesLeft = computed(() => minesLeftForBoard(hostSeatBoard.value))
+const player1MinesLeft = computed(() => minesLeftForBoard(player1Board.value))
 
-const guestSeatMinesLeft = computed(() => minesLeftForBoard(guestSeatBoard.value))
+const player2MinesLeft = computed(() => minesLeftForBoard(player2Board.value))
 
-const hostSeatStatusLabel = computed(() => gameStatusRu(hostSeatGameStatus.value))
+const player1StatusLabel = computed(() => gameStatusRu(player1GameStatus.value))
 
-const guestSeatStatusLabel = computed(() => gameStatusRu(guestSeatGameStatus.value))
+const player2StatusLabel = computed(() => gameStatusRu(player2GameStatus.value))
 
 const matchEndHeadline = computed(() => {
   const w = matchEndWinnerId.value
@@ -428,7 +424,11 @@ const saveLobbySettings = async () => {
   }
 }
 
-const flagsCount = computed(() => board.value.flat().filter(cell => cell.mark === 'flag').length)
+const flagsCount = computed(() => {
+  const g =
+    onlineMatchId.value ? (isLobbyHost.value ? player1Board.value : player2Board.value) : board.value
+  return g.flat().filter(cell => cell.mark === 'flag').length
+})
 
 const minesLeft = computed(() => minesCount.value - flagsCount.value)
 
@@ -517,7 +517,18 @@ const syncPlayTicker = () => {
 const applyGameState = (state: any) => {
   if (isLeavingGame.value) return
   gameId.value = state.gameId
-  board.value = cloneCells(state.board)
+  const cells = cloneCells(state.board)
+  if (onlineMatchId.value) {
+    if (isLobbyHost.value) {
+      player1Board.value = cells
+      player1GameStatus.value = state.gameStatus
+    } else {
+      player2Board.value = cells
+      player2GameStatus.value = state.gameStatus
+    }
+  } else {
+    board.value = cells
+  }
   gameStatus.value = state.gameStatus
   rows.value = state.rows
   cols.value = state.cols
@@ -535,8 +546,10 @@ const loadOnlineMatchFromStartResponse = async (started: StartMatchResponse) => 
   if (newMatch) {
     onlineMatchId.value = started.matchId
     gameId.value = started.myGameId
-    opponentBoard.value = []
-    opponentGameStatus.value = 'playing'
+    player1Board.value = []
+    player2Board.value = []
+    player1GameStatus.value = 'playing'
+    player2GameStatus.value = 'playing'
     clearHighlight()
   }
   const myState = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
@@ -624,8 +637,15 @@ const refreshOpponentState = async () => {
   if (!onlineMatchId.value) return
   try {
     const state = await api.getOpponentState(onlineMatchId.value)
-    opponentBoard.value = cloneCells(state.board)
-    opponentGameStatus.value = state.gameStatus
+    const cells = cloneCells(state.board)
+    const gs = state.gameStatus
+    if (isLobbyHost.value) {
+      player2Board.value = cells
+      player2GameStatus.value = gs
+    } else {
+      player1Board.value = cells
+      player1GameStatus.value = gs
+    }
   } catch (err) {
     console.error('Failed to fetch opponent state', err)
   }
@@ -775,8 +795,10 @@ const backToLobbyAfterMatch = async () => {
   isLeavingGame.value = false
   onlineMatchId.value = null
   pinnedOpponentUserId.value = ''
-  opponentBoard.value = []
-  opponentGameStatus.value = 'idle'
+  player1Board.value = []
+  player2Board.value = []
+  player1GameStatus.value = 'idle'
+  player2GameStatus.value = 'idle'
   stopPlayTick()
   gameId.value = null
   board.value = []
@@ -798,9 +820,11 @@ const backToMenu = async () => {
   clearHighlight()
   onlineLobby.value = null
   onlineMatchId.value = null
-  opponentBoard.value = []
+  player1Board.value = []
+  player2Board.value = []
   pinnedOpponentUserId.value = ''
-  opponentGameStatus.value = 'idle'
+  player1GameStatus.value = 'idle'
+  player2GameStatus.value = 'idle'
   const currentGameId = gameId.value
   gameId.value = null
   if (currentGameId) {
@@ -835,7 +859,11 @@ const newGame = async () => {
   })
 }
 
+const chordGrid = (): MinesweeperCell[][] =>
+  onlineMatchId.value ? (isLobbyHost.value ? player1Board.value : player2Board.value) : board.value
+
 const getNeighbors = (row: number, col: number) => {
+  const grid = chordGrid()
   const out: MinesweeperCell[] = []
   for (let dr = -1; dr <= 1; dr++) {
     for (let dc = -1; dc <= 1; dc++) {
@@ -843,7 +871,7 @@ const getNeighbors = (row: number, col: number) => {
       const nr = row + dr
       const nc = col + dc
       if (nr >= 0 && nr < rows.value && nc >= 0 && nc < cols.value) {
-        out.push(board.value[nr][nc])
+        out.push(grid[nr][nc])
       }
     }
   }
@@ -851,7 +879,8 @@ const getNeighbors = (row: number, col: number) => {
 }
 
 const highlightNeighbors = (row: number, col: number) => {
-  const cell = board.value[row]?.[col]
+  const grid = chordGrid()
+  const cell = grid[row]?.[col]
   if (!cell || !cell.isOpen || cell.adjacentMines === 0) return
   highlightedCells.value.clear()
   for (const n of getNeighbors(row, col)) {
@@ -865,34 +894,25 @@ const clearHighlight = () => {
   highlightedCells.value.clear()
 }
 
-/** Левое место = owner лобби (player1 на сервере); совпадает с колонкой «хост». */
-const myInteractiveSeat = computed<'host' | 'guest'>(() => {
-  const me = myUserId.value
-  if (!me) return 'host'
-  let oid = seatOwnerUserId.value
-  if (!oid && onlineLobby.value?.players?.length) {
-    oid = onlineLobby.value.players[0].userId
-  }
-  if (!oid) return 'host'
-  return oid === me ? 'host' : 'guest'
-})
+/** p1 = левая колонка = player1 на сервере = owner лобби; p2 = правая. */
+const myInteractiveSeat = computed<'p1' | 'p2'>(() => (isLobbyHost.value ? 'p1' : 'p2'))
 
-const onDuelCellOpen = (seat: 'host' | 'guest', row: number, col: number) => {
+const onDuelCellOpen = (seat: 'p1' | 'p2', row: number, col: number) => {
   if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
   handleCellOpen(row, col)
 }
 
-const onDuelCellMark = (seat: 'host' | 'guest', row: number, col: number) => {
+const onDuelCellMark = (seat: 'p1' | 'p2', row: number, col: number) => {
   if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
   handleCellMark(row, col)
 }
 
-const onDuelCellHighlight = (seat: 'host' | 'guest', row: number, col: number) => {
+const onDuelCellHighlight = (seat: 'p1' | 'p2', row: number, col: number) => {
   if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
   highlightNeighbors(row, col)
 }
 
-const onDuelClearHighlight = (seat: 'host' | 'guest') => {
+const onDuelClearHighlight = (seat: 'p1' | 'p2') => {
   if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
   clearHighlight()
 }
@@ -938,7 +958,8 @@ const tryRestoreOnlineSession = async () => {
     onlineMatchId.value = null
     gameId.value = null
     board.value = []
-    opponentBoard.value = []
+    player1Board.value = []
+    player2Board.value = []
   }
 }
 
