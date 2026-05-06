@@ -5,7 +5,9 @@ import type {
   RegisterRequest,
   GameRecord,
   RecordsResponse,
-  User
+  User,
+  MinesweeperGameState,
+  MinesweeperSettingsPayload
 } from '@/types/api'
 
 class ApiService {
@@ -75,6 +77,38 @@ class ApiService {
       params: { limit }
     })
     return response.data
+  }
+
+  async createMinesweeperGame(payload: {
+    rows: number
+    cols: number
+    mines: number
+    seed?: number
+    settings: MinesweeperSettingsPayload
+  }): Promise<MinesweeperGameState> {
+    const response = await this.client.post<MinesweeperGameState>('/minesweeper/games', payload)
+    return response.data
+  }
+
+  async revealMinesweeperCell(gameId: string, row: number, col: number): Promise<MinesweeperGameState> {
+    const response = await this.client.post<MinesweeperGameState>(`/minesweeper/games/${gameId}/reveal`, { row, col })
+    return response.data
+  }
+
+  async markMinesweeperCell(gameId: string, row: number, col: number): Promise<MinesweeperGameState> {
+    const response = await this.client.post<MinesweeperGameState>(`/minesweeper/games/${gameId}/mark`, { row, col })
+    return response.data
+  }
+
+  async getMinesweeperGame(gameId: string, devMode = false): Promise<MinesweeperGameState> {
+    const response = await this.client.get<MinesweeperGameState>(`/minesweeper/games/${gameId}`, {
+      params: { devMode }
+    })
+    return response.data
+  }
+
+  async deleteMinesweeperGame(gameId: string): Promise<void> {
+    await this.client.delete(`/minesweeper/games/${gameId}`)
   }
 }
 

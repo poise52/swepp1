@@ -48,3 +48,33 @@ export interface ApiError {
   message: string
   code?: string
 }
+
+export type CellMark = 'none' | 'flag' | 'question'
+export type GameStatus = 'idle' | 'playing' | 'won' | 'lost'
+
+export interface MinesweeperCell {
+  row: number
+  col: number
+  isMine: boolean
+  isOpen: boolean
+  mark: CellMark
+  adjacentMines: number
+}
+
+export interface MinesweeperSettingsPayload {
+  fieldGeneration: string
+  showQuestionMarks: boolean
+  enableChord: boolean
+  devMode: boolean
+}
+
+export interface MinesweeperGameState {
+  gameId: string
+  board: MinesweeperCell[][]
+  gameStatus: GameStatus
+  rows: number
+  cols: number
+  mines: number
+  seed: number
+  time: number
+}
