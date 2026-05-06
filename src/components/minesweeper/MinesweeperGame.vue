@@ -125,7 +125,7 @@
           @back="backToMenu"
       />
       <div class="ms-duel">
-        <div class="ms-duel-col ms-duel-col--host">
+        <div class="ms-duel-col ms-duel-col--host" :class="{ 'ms-duel-col--interactive': isLobbyHost }">
           <div class="ms-duel-caption">
             {{ hostSeatName }}
             <span v-if="isLobbyHost" class="ms-duel-caption__you"> (вы)</span>
@@ -141,13 +141,10 @@
               :highlighted-cells="isLobbyHost ? highlightedCells : emptyHighlightSet"
               :dev-mode="isLobbyHost ? effectiveDevMode : false"
               :read-only="!isLobbyHost"
-              @cell-open="handleCellOpen"
-              @cell-mark="handleCellMark"
-              @cell-highlight="highlightNeighbors"
-              @clear-highlight="clearHighlight"
+              v-on="hostSeatInteract"
           />
         </div>
-        <div class="ms-duel-col ms-duel-col--guest">
+        <div class="ms-duel-col ms-duel-col--guest" :class="{ 'ms-duel-col--interactive': !isLobbyHost }">
           <div class="ms-duel-caption">
             {{ guestSeatName }}
             <span v-if="!isLobbyHost" class="ms-duel-caption__you"> (вы)</span>
@@ -163,10 +160,7 @@
               :highlighted-cells="!isLobbyHost ? highlightedCells : emptyHighlightSet"
               :dev-mode="!isLobbyHost ? effectiveDevMode : false"
               :read-only="isLobbyHost"
-              @cell-open="handleCellOpen"
-              @cell-mark="handleCellMark"
-              @cell-highlight="highlightNeighbors"
-              @clear-highlight="clearHighlight"
+              v-on="guestSeatInteract"
           />
         </div>
       </div>
@@ -210,7 +204,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useSettings } from '@/composables/useSettings'
 import { api } from '@/services/api'
 import { store } from '@/store'
@@ -255,6 +249,9 @@ const hostEdit = ref({ rows: 9, cols: 9, mines: 10, seed: 0 })
 
 const myUserId = computed(() => store.getters.currentUser?.id || '')
 
+/** Владелец лобби (= левое место матча); с бэка приходит `ownerId`, иначе падаем на первого игрока. */
+const seatOwnerUserId = computed(() => onlineLobby.value?.ownerId ?? onlineLobby.value?.players?.[0]?.userId ?? '')
+
 const isLobbyPhase = computed(() => !!onlineLobby.value && !onlineMatchId.value)
 
 const effectiveDevMode = computed(() => {
@@ -263,7 +260,9 @@ const effectiveDevMode = computed(() => {
   return false
 })
 
-const isLobbyHost = computed(() => onlineLobby.value?.players?.[0]?.userId === myUserId.value && !!myUserId.value)
+const isLobbyHost = computed(
+  () => !!myUserId.value && !!seatOwnerUserId.value && seatOwnerUserId.value === myUserId.value
+)
 
 const opponentUserId = computed(
   () => onlineLobby.value?.players.find((p) => p.userId !== myUserId.value)?.userId ?? ''
@@ -277,15 +276,17 @@ const syncPinnedOpponentFromLobby = () => {
   if (other) pinnedOpponentUserId.value = other.userId
 }
 
-/** Слева поле игрока `players[0]` (хост лобби), справа `players[1]` — совпадает с player1/player2 на бэкенде. */
+const hostSeatName = computed(() => {
+  const oid = seatOwnerUserId.value
+  if (!oid) return onlineLobby.value?.players[0]?.username ?? 'Хост'
+  return onlineLobby.value?.players.find((p) => p.userId === oid)?.username ?? 'Хост'
+})
 
-const hostSeatName = computed(
-  () => onlineLobby.value?.players[0]?.username ?? 'Хост'
-)
-
-const guestSeatName = computed(
-  () => onlineLobby.value?.players[1]?.username ?? 'Гость'
-)
+const guestSeatName = computed(() => {
+  const oid = seatOwnerUserId.value
+  const g = onlineLobby.value?.players.find((p) => p.userId && p.userId !== oid)
+  return g?.username ?? onlineLobby.value?.players[1]?.username ?? 'Гость'
+})
 
 const gameStatusRu = (s: GameStatus) => {
   switch (s) {
@@ -391,7 +392,7 @@ const amReady = computed(() => {
 const canStartMatch = computed(() => {
   if (!onlineLobby.value || onlineMatchId.value) return false
   const allReady = onlineLobby.value.players.length === 2 && onlineLobby.value.players.every(p => p.ready)
-  return allReady && onlineLobby.value.players[0]?.userId === myUserId.value
+  return allReady && seatOwnerUserId.value !== '' && seatOwnerUserId.value === myUserId.value
 })
 
 const saveLobbySettings = async () => {
@@ -447,6 +448,28 @@ const cloneCells = (b: MinesweeperCell[][]): MinesweeperCell[][] => {
   }
 }
 
+let playTickInterval: ReturnType<typeof setInterval> | null = null
+
+const stopPlayTick = () => {
+  if (playTickInterval) {
+    clearInterval(playTickInterval)
+    playTickInterval = null
+  }
+}
+
+/** Таймер с сервером только при каждом ответе; между ходами крутим локально во время «playing». */
+const syncPlayTicker = () => {
+  if (!gameId.value || gameStatus.value !== 'playing') {
+    stopPlayTick()
+    return
+  }
+  if (!playTickInterval) {
+    playTickInterval = setInterval(() => {
+      time.value += 1
+    }, 1000)
+  }
+}
+
 const applyGameState = (state: any) => {
   if (isLeavingGame.value) return
   gameId.value = state.gameId
@@ -457,6 +480,7 @@ const applyGameState = (state: any) => {
   minesCount.value = state.mines
   seed.value = state.seed
   time.value = state.time
+  syncPlayTicker()
 }
 
 /** Общая подгрузка матча: HTTP-старт и WS match_started (в т.ч. повтор при пропущенном apply). */
@@ -704,6 +728,7 @@ const backToLobbyAfterMatch = async () => {
   pinnedOpponentUserId.value = ''
   opponentBoard.value = []
   opponentGameStatus.value = 'idle'
+  stopPlayTick()
   gameId.value = null
   board.value = []
   gameStatus.value = 'idle'
@@ -716,6 +741,7 @@ const backToLobbyAfterMatch = async () => {
 
 const backToMenu = async () => {
   isLeavingGame.value = true
+  stopPlayTick()
   onlineWs.value?.close()
   onlineWs.value = null
   showMenu.value = true
@@ -789,6 +815,30 @@ const clearHighlight = () => {
   highlightedCells.value.clear()
 }
 
+const hostSeatInteract = computed(() =>
+  !isLobbyHost.value
+    ? {}
+    : {
+        onCellOpen: handleCellOpen,
+        onCellMark: handleCellMark,
+        onCellHighlight: highlightNeighbors,
+        onClearHighlight: clearHighlight
+      }
+)
+
+const guestSeatInteract = computed(() =>
+  isLobbyHost.value
+    ? {}
+    : {
+        onCellOpen: handleCellOpen,
+        onCellMark: handleCellMark,
+        onCellHighlight: highlightNeighbors,
+        onClearHighlight: clearHighlight
+      }
+)
+
+onBeforeUnmount(() => stopPlayTick())
+
 watch(gameStatus, async (status) => {
   if (onlineMatchId.value && myUserId.value) {
     try {
@@ -851,6 +901,11 @@ watch(gameStatus, async (status) => {
   flex-direction: column;
   align-items: center;
   gap: 0.35rem;
+  position: relative;
+}
+
+.ms-duel-col--interactive {
+  z-index: 2;
 }
 
 .ms-duel-caption {

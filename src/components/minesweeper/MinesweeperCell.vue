@@ -118,8 +118,9 @@ const getCellContent = (cell: Cell, devMode: boolean) => {
 </script>
 
 <style scoped>
+/* Не использовать pointer-events: none — событие проходит сквозь клетку к полю ниже при наложении двух досок. */
 .ms-cell--readonly {
-  pointer-events: none;
   cursor: default;
+  opacity: 0.92;
 }
 </style>

@@ -90,6 +90,8 @@ export interface LobbyPlayer {
 
 export interface OnlineLobby {
   id: string
+  /** Владелец лобби = первый столбец матча на клиенте; совпадает с тем, кто игрок 1 при старте. */
+  ownerId?: string
   inviteCode: string
   inviteLink: string
   mode: 'casual' | 'ranked'
