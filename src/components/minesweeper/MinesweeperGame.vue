@@ -111,6 +111,7 @@
       <button type="button" class="ms-menu__btn" :disabled="isSyncingOnline || !gameId" @click="syncOnlineField">
         Синхронизировать поле
       </button>
+      <span v-if="syncFieldFeedback" class="ms-online-strip__hint">{{ syncFieldFeedback }}</span>
     </div>
     <template v-if="onlineMatchId">
       <MinesweeperHeader
@@ -235,6 +236,8 @@ const matchEndVisible = ref(false)
 const matchEndWinnerId = ref<string | null>(null)
 const isSavingLobbySettings = ref(false)
 const isSyncingOnline = ref(false)
+const syncFieldFeedback = ref('')
+let syncFieldFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 const hostEdit = ref({ rows: 9, cols: 9, mines: 10, seed: 0 })
 
 const myUserId = computed(() => store.getters.currentUser?.id || '')
@@ -311,6 +314,15 @@ const flashCopyFeedback = (message: string) => {
   copyFeedbackTimer = setTimeout(() => {
     copyFeedback.value = ''
     copyFeedbackTimer = null
+  }, 2200)
+}
+
+const flashSyncFieldFeedback = (message: string) => {
+  syncFieldFeedback.value = message
+  if (syncFieldFeedbackTimer) clearTimeout(syncFieldFeedbackTimer)
+  syncFieldFeedbackTimer = setTimeout(() => {
+    syncFieldFeedback.value = ''
+    syncFieldFeedbackTimer = null
   }, 2200)
 }
 
@@ -406,6 +418,23 @@ const applyGameState = (state: any) => {
   time.value = state.time
 }
 
+/** Общая подгрузка матча: HTTP-старт и WS match_started (в т.ч. повтор при пропущенном apply). */
+const loadOnlineMatchFromStartResponse = async (started: StartMatchResponse) => {
+  isLeavingGame.value = false
+  syncPinnedOpponentFromLobby()
+  const newMatch = onlineMatchId.value !== started.matchId
+  if (newMatch) {
+    onlineMatchId.value = started.matchId
+    gameId.value = started.myGameId
+    opponentBoard.value = []
+    opponentGameStatus.value = 'playing'
+    clearHighlight()
+  }
+  const myState = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
+  applyGameState(myState)
+  await refreshOpponentState()
+}
+
 const createGame = async (params: { rows: number; cols: number; mines: number; seed?: number }) => {
   isLeavingGame.value = false
   const state = await api.createMinesweeperGame({
@@ -433,20 +462,32 @@ const connectLobbyWs = (lobbyId: string) => {
         syncPinnedOpponentFromLobby()
       } else if (msg.event === 'match_started') {
         const started = msg.payload as StartMatchResponse
-        if (!onlineMatchId.value) {
-          syncPinnedOpponentFromLobby()
-          onlineMatchId.value = started.matchId
-          gameId.value = started.myGameId
-          const myState = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
-          applyGameState(myState)
-          await refreshOpponentState()
+        try {
+          await loadOnlineMatchFromStartResponse(started)
+        } catch (e) {
+          console.error('match_started hydrate failed', e)
         }
       } else if (msg.event === 'player_move' && onlineMatchId.value) {
+        const mid = (msg.payload as { matchId?: string })?.matchId
+        if (mid && mid !== onlineMatchId.value) return
         await refreshOpponentState()
       } else if (msg.event === 'match_finished') {
+        isLeavingGame.value = false
         const winnerId = msg.payload?.winnerId as string | undefined
         matchEndWinnerId.value = winnerId ?? null
         matchEndVisible.value = true
+        const finishedMid = (msg.payload as { matchId?: string })?.matchId
+        if (!finishedMid || finishedMid === onlineMatchId.value) {
+          try {
+            await refreshOpponentState()
+            if (gameId.value) {
+              const myState = await api.getMinesweeperGame(gameId.value, effectiveDevMode.value)
+              applyGameState(myState)
+            }
+          } catch (e) {
+            console.error('refresh at match end', e)
+          }
+        }
         if (store.getters.isAuthenticated) {
           try {
             await store.dispatch('fetchCurrentUser')
@@ -485,6 +526,7 @@ const isIgnorableGameError = (err: any): boolean => {
 
 const handleCellOpen = async (row: number, col: number) => {
   if (!gameId.value || isBusy.value) return
+  if (gameStatus.value === 'won' || gameStatus.value === 'lost') return
   isBusy.value = true
   try {
     const state = await api.revealMinesweeperCell(gameId.value, row, col)
@@ -503,6 +545,7 @@ const handleCellOpen = async (row: number, col: number) => {
 
 const handleCellMark = async (row: number, col: number) => {
   if (!gameId.value || isBusy.value) return
+  if (gameStatus.value === 'won' || gameStatus.value === 'lost') return
   isBusy.value = true
   try {
     const state = await api.markMinesweeperCell(gameId.value, row, col)
@@ -553,6 +596,7 @@ const handleOnlineCreate = async (
   onlineLobby.value = lobby
   lastParams.value = { rows: rowsCount, cols: colsCount, mines, seed: lobby.seed }
   syncHostEditor()
+  isLeavingGame.value = false
   syncPinnedOpponentFromLobby()
   showMenu.value = false
   connectLobbyWs(lobby.id)
@@ -564,6 +608,7 @@ const handleOnlineJoin = async (invite: string) => {
   onlineLobby.value = lobby
   lastParams.value = { rows: lobby.rows, cols: lobby.cols, mines: lobby.mines, seed: lobby.seed }
   syncHostEditor()
+  isLeavingGame.value = false
   syncPinnedOpponentFromLobby()
   showMenu.value = false
   connectLobbyWs(lobby.id)
@@ -576,25 +621,26 @@ const toggleReady = async () => {
 
 const startOnlineMatch = async () => {
   if (!onlineLobby.value) return
-  syncPinnedOpponentFromLobby()
   const started = await api.startOnlineMatch(onlineLobby.value.id)
-  onlineMatchId.value = started.matchId
-  gameId.value = started.myGameId
-  const state = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
-  applyGameState(state)
-  opponentGameStatus.value = 'playing'
-  await refreshOpponentState()
+  try {
+    await loadOnlineMatchFromStartResponse(started)
+  } catch (e) {
+    console.error('start match hydrate failed', e)
+  }
 }
 
 const syncOnlineField = async () => {
   if (!gameId.value || !onlineMatchId.value) return
   isSyncingOnline.value = true
   try {
+    isLeavingGame.value = false
     const myState = await api.getMinesweeperGame(gameId.value, effectiveDevMode.value)
     applyGameState(myState)
     await refreshOpponentState()
+    flashSyncFieldFeedback('Поля обновлены')
   } catch (e) {
     console.error(e)
+    flashSyncFieldFeedback('Не удалось обновить')
   } finally {
     isSyncingOnline.value = false
   }
@@ -612,6 +658,7 @@ const backToLobbyAfterMatch = async () => {
     console.error(e)
     return
   }
+  isLeavingGame.value = false
   onlineMatchId.value = null
   pinnedOpponentUserId.value = ''
   opponentBoard.value = []
@@ -739,8 +786,14 @@ watch(gameStatus, async (status) => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  align-items: center;
   justify-content: center;
   margin-bottom: 0.5rem;
+}
+
+.ms-online-strip__hint {
+  font-size: 0.8rem;
+  opacity: 0.85;
 }
 
 .ms-duel {
