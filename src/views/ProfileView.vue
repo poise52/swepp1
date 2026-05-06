@@ -16,6 +16,16 @@
           <span class="profile__label">Дата регистрации:</span>
           <span class="profile__value">{{ formatDate(currentUser?.createdAt) }}</span>
         </div>
+        <div class="profile__field">
+          <span class="profile__label">PTS:</span>
+          <span class="profile__value">{{ currentUser?.ratingPts ?? 0 }}</span>
+        </div>
+        <div class="profile__field">
+          <span class="profile__label">Статус:</span>
+          <span class="profile__value">
+            {{ currentUser?.worldRank ? `Топ ${currentUser.worldRank}` : 'Нет ранга' }}
+          </span>
+        </div>
       </div>
 
       <h3 class="profile__subtitle">Мои рекорды</h3>
