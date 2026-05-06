@@ -136,6 +136,17 @@ class ApiService {
     return response.data
   }
 
+  async getActiveMatch(lobbyId: string): Promise<StartMatchResponse | null> {
+    try {
+      const response = await this.client.get<StartMatchResponse>(`/online/lobbies/${lobbyId}/active-match`)
+      return response.data
+    } catch (e: unknown) {
+      const status = (e as { response?: { status?: number } })?.response?.status
+      if (status === 404) return null
+      throw e
+    }
+  }
+
   async setOnlineReady(lobbyId: string, ready: boolean): Promise<OnlineLobby> {
     const response = await this.client.post<OnlineLobby>(`/online/lobbies/${lobbyId}/ready`, { ready })
     return response.data

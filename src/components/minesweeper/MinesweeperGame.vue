@@ -1,4 +1,6 @@
 <template>
+  <div v-if="bootstrappingOnline" class="ms-boot">Подключение к игре…</div>
+  <template v-else>
   <MinesweeperMenu
       v-if="showMenu"
       @start="handleStart"
@@ -208,6 +210,7 @@
       </div>
     </div>
   </Teleport>
+  </template>
 </template>
 
 <script setup lang="ts">
@@ -220,6 +223,7 @@ import MinesweeperMenu from './MinesweeperMenu.vue'
 import MinesweeperHeader from './MinesweeperHeader.vue'
 import MinesweeperBoard from './MinesweeperBoard.vue'
 
+const bootstrappingOnline = ref(true)
 const showMenu = ref(true)
 const currentDifficulty = ref('Новичок')
 const { settings } = useSettings()
@@ -238,12 +242,10 @@ const isLeavingGame = ref(false)
 const onlineLobby = ref<OnlineLobby | null>(null)
 const onlineMatchId = ref<string | null>(null)
 const onlineWs = ref<WebSocket | null>(null)
-/** Игрок 1 / 2 строго как в online_matches (player1 = первый в лобби = owner). Никакого swap с «моей» доской. */
 const player1Board = ref<MinesweeperCell[][]>([])
 const player2Board = ref<MinesweeperCell[][]>([])
 const player1GameStatus = ref<GameStatus>('idle')
 const player2GameStatus = ref<GameStatus>('idle')
-/** Соперник из лобби на момент старта — чтобы finish не терялся, если WS-лобби устарело. */
 const pinnedOpponentUserId = ref('')
 const emptyHighlightSet = new Set<string>()
 const copyFeedback = ref('')
@@ -259,7 +261,6 @@ const hostEdit = ref({ rows: 9, cols: 9, mines: 10, seed: 0 })
 
 const myUserId = computed(() => store.getters.currentUser?.id || '')
 
-/** Владелец лобби (= левое место матча); с бэка приходит `ownerId`, иначе падаем на первого игрока. */
 const seatOwnerUserId = computed(() => onlineLobby.value?.ownerId ?? onlineLobby.value?.players?.[0]?.userId ?? '')
 
 const isLobbyPhase = computed(() => !!onlineLobby.value && !onlineMatchId.value)
@@ -501,7 +502,6 @@ const stopPlayTick = () => {
   }
 }
 
-/** Таймер с сервером только при каждом ответе; между ходами крутим локально во время «playing». */
 const syncPlayTicker = () => {
   if (!gameId.value || gameStatus.value !== 'playing') {
     stopPlayTick()
@@ -538,7 +538,6 @@ const applyGameState = (state: any) => {
   syncPlayTicker()
 }
 
-/** Общая подгрузка матча: HTTP-старт и WS match_started (в т.ч. повтор при пропущенном apply). */
 const loadOnlineMatchFromStartResponse = async (started: StartMatchResponse) => {
   isLeavingGame.value = false
   syncPinnedOpponentFromLobby()
@@ -556,6 +555,18 @@ const loadOnlineMatchFromStartResponse = async (started: StartMatchResponse) => 
   applyGameState(myState)
   await refreshOpponentState()
   persistOnlineSessionSnapshot()
+}
+
+const hydrateActiveMatchIfNeeded = async () => {
+  const lob = onlineLobby.value
+  if (!lob?.id || lob.status !== 'active' || onlineMatchId.value) return
+  try {
+    const started = await api.getActiveMatch(lob.id)
+    if (!started) return
+    await loadOnlineMatchFromStartResponse(started)
+  } catch (e) {
+    console.error('hydrate active match failed', e)
+  }
 }
 
 const createGame = async (params: { rows: number; cols: number; mines: number; seed?: number }) => {
@@ -583,6 +594,7 @@ const connectLobbyWs = (lobbyId: string) => {
         onlineLobby.value = msg.payload as OnlineLobby
         syncHostEditor()
         syncPinnedOpponentFromLobby()
+        await hydrateActiveMatchIfNeeded()
       } else if (msg.event === 'match_started') {
         const started = msg.payload as StartMatchResponse
         try {
@@ -732,6 +744,7 @@ const handleOnlineCreate = async (
   syncPinnedOpponentFromLobby()
   showMenu.value = false
   connectLobbyWs(lobby.id)
+  await hydrateActiveMatchIfNeeded()
 }
 
 const handleOnlineJoin = async (invite: string) => {
@@ -744,6 +757,7 @@ const handleOnlineJoin = async (invite: string) => {
   syncPinnedOpponentFromLobby()
   showMenu.value = false
   connectLobbyWs(lobby.id)
+  await hydrateActiveMatchIfNeeded()
 }
 
 const toggleReady = async () => {
@@ -894,7 +908,6 @@ const clearHighlight = () => {
   highlightedCells.value.clear()
 }
 
-/** p1 = левая колонка = player1 на сервере = owner лобби; p2 = правая. */
 const myInteractiveSeat = computed<'p1' | 'p2'>(() => (isLobbyHost.value ? 'p1' : 'p2'))
 
 const onDuelCellOpen = (seat: 'p1' | 'p2', row: number, col: number) => {
@@ -944,9 +957,15 @@ const tryRestoreOnlineSession = async () => {
     gameId.value = parsed.myGameId
     isLeavingGame.value = false
 
-    const myState = await api.getMinesweeperGame(parsed.myGameId, effectiveDevMode.value)
-    applyGameState(myState)
-    await refreshOpponentState()
+    try {
+      const myState = await api.getMinesweeperGame(parsed.myGameId, effectiveDevMode.value)
+      applyGameState(myState)
+      await refreshOpponentState()
+    } catch {
+      const started = await api.getActiveMatch(parsed.lobbyId)
+      if (!started) throw new Error('no game and no active match')
+      await loadOnlineMatchFromStartResponse(started)
+    }
 
     showMenu.value = false
     connectLobbyWs(parsed.lobbyId)
@@ -965,8 +984,12 @@ const tryRestoreOnlineSession = async () => {
 
 onBeforeUnmount(() => stopPlayTick())
 
-onMounted(() => {
-  void tryRestoreOnlineSession()
+onMounted(async () => {
+  try {
+    await tryRestoreOnlineSession()
+  } finally {
+    bootstrappingOnline.value = false
+  }
 })
 
 watch([onlineMatchId, gameId, pinnedOpponentUserId, () => onlineLobby.value?.id], () =>
@@ -1007,6 +1030,16 @@ watch(gameStatus, async (status) => {
 </script>
 
 <style scoped>
+.ms-boot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 12rem;
+  padding: 2rem;
+  font-size: 1rem;
+  opacity: 0.92;
+}
+
 .ms-online-strip {
   display: flex;
   flex-wrap: wrap;
