@@ -12,6 +12,7 @@
           :game-status="gameStatus"
           :is-highlighted="highlightedCells.has(`${cell.row}-${cell.col}`)"
           :dev-mode="devMode"
+          :read-only="readOnly"
           @open="(r, c) => emit('cellOpen', r, c)"
           @mark="(r, c) => emit('cellMark', r, c)"
           @highlight="(r, c) => emit('cellHighlight', r, c)"
@@ -31,9 +32,12 @@ interface Props {
   cols: number
   highlightedCells: Set<string>
   devMode: boolean
+  readOnly?: boolean
 }
 
-defineProps<Props>()
+withDefaults(defineProps<Props>(), {
+  readOnly: false
+})
 
 const emit = defineEmits<{
   cellOpen: [row: number, col: number]

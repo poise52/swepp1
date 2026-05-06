@@ -1,6 +1,8 @@
 <template>
   <button
-      :class="getCellClass(cell, gameStatus, isHighlighted, devMode)"
+      type="button"
+      :tabindex="readOnly ? -1 : 0"
+      :class="cellButtonClass(cell, gameStatus, isHighlighted, devMode, readOnly)"
       @mousedown="handleMouseDown(cell)"
       @mouseup="handleMouseUp(cell)"
       @mouseleave="emit('clearHighlight')"
@@ -29,9 +31,12 @@ interface Props {
   gameStatus: string
   isHighlighted: boolean
   devMode: boolean
+  readOnly?: boolean
 }
 
-defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  readOnly: false
+})
 
 const emit = defineEmits<{
   open: [row: number, col: number]
@@ -41,25 +46,37 @@ const emit = defineEmits<{
 }>()
 
 const handleMouseDown = (cell: Cell) => {
+  if (props.readOnly) return
   if (cell.isOpen && cell.adjacentMines > 0) {
     emit('highlight', cell.row, cell.col)
   }
 }
 
 const handleMouseUp = (cell: Cell) => {
+  if (props.readOnly) return
   emit('clearHighlight')
 }
 
 const handleClick = (cell: Cell) => {
+  if (props.readOnly) return
   emit('open', cell.row, cell.col)
 }
 
 const handleContextMenu = (e: MouseEvent, cell: Cell) => {
+  if (props.readOnly) return
   e.preventDefault()
   emit('mark', cell.row, cell.col)
 }
 
-const getCellClass = (cell: Cell, gameStatus: string, isHighlighted: boolean, devMode: boolean) => {
+const cellButtonClass = (
+  cell: Cell,
+  gameStatus: string,
+  isHighlighted: boolean,
+  devMode: boolean,
+  ro: boolean
+) => [...getCellClass(cell, gameStatus, isHighlighted, devMode), ro ? 'ms-cell--readonly' : ''].filter(Boolean)
+
+const getCellClass = (cell: Cell, gameStatus: string, isHighlighted: boolean, devMode: boolean): string[] => {
   const classes = ['ms-cell']
 
   if (cell.isOpen) {
@@ -99,3 +116,10 @@ const getCellContent = (cell: Cell, devMode: boolean) => {
   return null
 }
 </script>
+
+<style scoped>
+.ms-cell--readonly {
+  pointer-events: none;
+  cursor: default;
+}
+</style>

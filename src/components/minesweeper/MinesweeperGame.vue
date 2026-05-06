@@ -108,34 +108,78 @@
 
   <div v-else :class="gameClass" :style="gameStyle">
     <div v-if="onlineMatchId" class="ms-online-strip">
-      <button type="button" class="ms-menu__btn" @click="toggleSwapView">
-        {{ viewingOpponent ? 'Моё поле' : 'Поле соперника' }}
-      </button>
       <button type="button" class="ms-menu__btn" :disabled="isSyncingOnline || !gameId" @click="syncOnlineField">
         Синхронизировать поле
       </button>
     </div>
-    <MinesweeperHeader
-        :mines-left="minesLeft"
-        :time="time"
-        :game-status="gameStatus"
-        :seed="seed"
-        :game-controls-allowed="!onlineMatchId"
-        @restart="restartGame"
-        @new-game="newGame"
-        @back="backToMenu"
-    />
-    <MinesweeperBoard
-        :board="viewingOpponent ? opponentBoard : board"
-        :game-status="gameStatus"
-        :cols="cols"
-        :highlighted-cells="highlightedCells"
-        :dev-mode="effectiveDevMode"
-        @cell-open="handleCellOpen"
-        @cell-mark="handleCellMark"
-        @cell-highlight="highlightNeighbors"
-        @clear-highlight="clearHighlight"
-    />
+    <template v-if="onlineMatchId">
+      <MinesweeperHeader
+          :mines-left="minesLeft"
+          :time="time"
+          :game-status="gameStatus"
+          :seed="seed"
+          :game-controls-allowed="false"
+          @restart="restartGame"
+          @new-game="newGame"
+          @back="backToMenu"
+      />
+      <div class="ms-duel">
+        <div class="ms-duel-col">
+          <div class="ms-duel-caption">Вы</div>
+          <MinesweeperBoard
+              :board="board"
+              :game-status="gameStatus"
+              :cols="cols"
+              :highlighted-cells="highlightedCells"
+              :dev-mode="effectiveDevMode"
+              :read-only="false"
+              @cell-open="handleCellOpen"
+              @cell-mark="handleCellMark"
+              @cell-highlight="highlightNeighbors"
+              @clear-highlight="clearHighlight"
+          />
+        </div>
+        <div class="ms-duel-col">
+          <div class="ms-duel-caption">
+            {{ opponentDisplayName }}
+            <span class="ms-duel-caption__meta">
+              · мин {{ opponentMinesLeft }} · {{ opponentStatusLabel }}
+            </span>
+          </div>
+          <MinesweeperBoard
+              :board="opponentBoard"
+              :game-status="opponentGameStatus"
+              :cols="cols"
+              :highlighted-cells="emptyHighlightSet"
+              :dev-mode="false"
+              :read-only="true"
+          />
+        </div>
+      </div>
+    </template>
+    <template v-else>
+      <MinesweeperHeader
+          :mines-left="minesLeft"
+          :time="time"
+          :game-status="gameStatus"
+          :seed="seed"
+          :game-controls-allowed="true"
+          @restart="restartGame"
+          @new-game="newGame"
+          @back="backToMenu"
+      />
+      <MinesweeperBoard
+          :board="board"
+          :game-status="gameStatus"
+          :cols="cols"
+          :highlighted-cells="highlightedCells"
+          :dev-mode="effectiveDevMode"
+          @cell-open="handleCellOpen"
+          @cell-mark="handleCellMark"
+          @cell-highlight="highlightNeighbors"
+          @clear-highlight="clearHighlight"
+      />
+    </template>
   </div>
 
   <Teleport to="body">
@@ -180,7 +224,10 @@ const onlineLobby = ref<OnlineLobby | null>(null)
 const onlineMatchId = ref<string | null>(null)
 const onlineWs = ref<WebSocket | null>(null)
 const opponentBoard = ref<MinesweeperCell[][]>([])
-const viewingOpponent = ref(false)
+const opponentGameStatus = ref<GameStatus>('playing')
+/** Соперник из лобби на момент старта — чтобы finish не терялся, если WS-лобби устарело. */
+const pinnedOpponentUserId = ref('')
+const emptyHighlightSet = new Set<string>()
 const copyFeedback = ref('')
 let copyFeedbackTimer: ReturnType<typeof setTimeout> | null = null
 const disconnectedPeerIds = ref<string[]>([])
@@ -205,6 +252,39 @@ const isLobbyHost = computed(() => onlineLobby.value?.players?.[0]?.userId === m
 const opponentUserId = computed(
   () => onlineLobby.value?.players.find((p) => p.userId !== myUserId.value)?.userId ?? ''
 )
+
+const resolvedOpponentUserId = computed(() => pinnedOpponentUserId.value || opponentUserId.value)
+
+const syncPinnedOpponentFromLobby = () => {
+  const me = myUserId.value
+  const other = onlineLobby.value?.players.find((p) => p.userId && p.userId !== me)
+  if (other) pinnedOpponentUserId.value = other.userId
+}
+
+const opponentDisplayName = computed(() => {
+  const id = resolvedOpponentUserId.value
+  if (!id) return 'Соперник'
+  return onlineLobby.value?.players.find((p) => p.userId === id)?.username ?? 'Соперник'
+})
+
+const opponentFlagsCount = computed(
+  () => opponentBoard.value.flat().filter((c) => c.mark === 'flag').length
+)
+
+const opponentMinesLeft = computed(() => minesCount.value - opponentFlagsCount.value)
+
+const opponentStatusLabel = computed(() => {
+  switch (opponentGameStatus.value) {
+    case 'won':
+      return 'победа'
+    case 'lost':
+      return 'поражение'
+    case 'idle':
+      return '—'
+    default:
+      return 'в игре'
+  }
+})
 
 const matchEndHeadline = computed(() => {
   const w = matchEndWinnerId.value
@@ -304,7 +384,8 @@ const gameClass = computed(() => {
   return {
     'minesweeper': true,
     'minesweeper--won': gameStatus.value === 'won',
-    'minesweeper--lost': gameStatus.value === 'lost'
+    'minesweeper--lost': gameStatus.value === 'lost',
+    'minesweeper--online-duel': !!onlineMatchId.value
   }
 })
 
@@ -349,9 +430,11 @@ const connectLobbyWs = (lobbyId: string) => {
       if (msg.event === 'lobby_updated') {
         onlineLobby.value = msg.payload as OnlineLobby
         syncHostEditor()
+        syncPinnedOpponentFromLobby()
       } else if (msg.event === 'match_started') {
         const started = msg.payload as StartMatchResponse
         if (!onlineMatchId.value) {
+          syncPinnedOpponentFromLobby()
           onlineMatchId.value = started.matchId
           gameId.value = started.myGameId
           const myState = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
@@ -364,6 +447,13 @@ const connectLobbyWs = (lobbyId: string) => {
         const winnerId = msg.payload?.winnerId as string | undefined
         matchEndWinnerId.value = winnerId ?? null
         matchEndVisible.value = true
+        if (store.getters.isAuthenticated) {
+          try {
+            await store.dispatch('fetchCurrentUser')
+          } catch {
+            /* ignore */
+          }
+        }
       } else if (msg.event === 'player_disconnected') {
         const uid = msg.payload?.userId as string | undefined
         if (uid && !disconnectedPeerIds.value.includes(uid)) {
@@ -382,6 +472,7 @@ const refreshOpponentState = async () => {
   try {
     const state = await api.getOpponentState(onlineMatchId.value)
     opponentBoard.value = state.board
+    opponentGameStatus.value = state.gameStatus
   } catch (err) {
     console.error('Failed to fetch opponent state', err)
   }
@@ -393,7 +484,6 @@ const isIgnorableGameError = (err: any): boolean => {
 }
 
 const handleCellOpen = async (row: number, col: number) => {
-  if (viewingOpponent.value) return
   if (!gameId.value || isBusy.value) return
   isBusy.value = true
   try {
@@ -412,7 +502,6 @@ const handleCellOpen = async (row: number, col: number) => {
 }
 
 const handleCellMark = async (row: number, col: number) => {
-  if (viewingOpponent.value) return
   if (!gameId.value || isBusy.value) return
   isBusy.value = true
   try {
@@ -464,6 +553,7 @@ const handleOnlineCreate = async (
   onlineLobby.value = lobby
   lastParams.value = { rows: rowsCount, cols: colsCount, mines, seed: lobby.seed }
   syncHostEditor()
+  syncPinnedOpponentFromLobby()
   showMenu.value = false
   connectLobbyWs(lobby.id)
 }
@@ -474,6 +564,7 @@ const handleOnlineJoin = async (invite: string) => {
   onlineLobby.value = lobby
   lastParams.value = { rows: lobby.rows, cols: lobby.cols, mines: lobby.mines, seed: lobby.seed }
   syncHostEditor()
+  syncPinnedOpponentFromLobby()
   showMenu.value = false
   connectLobbyWs(lobby.id)
 }
@@ -485,16 +576,14 @@ const toggleReady = async () => {
 
 const startOnlineMatch = async () => {
   if (!onlineLobby.value) return
+  syncPinnedOpponentFromLobby()
   const started = await api.startOnlineMatch(onlineLobby.value.id)
   onlineMatchId.value = started.matchId
   gameId.value = started.myGameId
   const state = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
   applyGameState(state)
+  opponentGameStatus.value = 'playing'
   await refreshOpponentState()
-}
-
-const toggleSwapView = () => {
-  viewingOpponent.value = !viewingOpponent.value
 }
 
 const syncOnlineField = async () => {
@@ -524,8 +613,9 @@ const backToLobbyAfterMatch = async () => {
     return
   }
   onlineMatchId.value = null
-  viewingOpponent.value = false
+  pinnedOpponentUserId.value = ''
   opponentBoard.value = []
+  opponentGameStatus.value = 'idle'
   gameId.value = null
   board.value = []
   gameStatus.value = 'idle'
@@ -545,7 +635,8 @@ const backToMenu = async () => {
   onlineLobby.value = null
   onlineMatchId.value = null
   opponentBoard.value = []
-  viewingOpponent.value = false
+  pinnedOpponentUserId.value = ''
+  opponentGameStatus.value = 'idle'
   const currentGameId = gameId.value
   gameId.value = null
   if (currentGameId) {
@@ -615,14 +706,17 @@ watch(gameStatus, async (status) => {
     try {
       if (status === 'won') {
         await api.finishOnlineMatch(onlineMatchId.value, myUserId.value)
-      } else if (status === 'lost' && opponentUserId.value) {
-        await api.finishOnlineMatch(onlineMatchId.value, opponentUserId.value)
+      } else if (status === 'lost' && resolvedOpponentUserId.value) {
+        await api.finishOnlineMatch(onlineMatchId.value, resolvedOpponentUserId.value)
+      }
+      if ((status === 'won' || status === 'lost') && store.getters.isAuthenticated) {
+        await store.dispatch('fetchCurrentUser')
       }
     } catch (err) {
       console.error('Failed to finish online match:', err)
     }
   }
-  if (status === 'won' && store.getters.isAuthenticated) {
+  if (status === 'won' && store.getters.isAuthenticated && !onlineMatchId.value) {
     try {
       await api.saveGameRecord({
         difficulty: currentDifficulty.value,
@@ -647,6 +741,34 @@ watch(gameStatus, async (status) => {
   gap: 0.5rem;
   justify-content: center;
   margin-bottom: 0.5rem;
+}
+
+.ms-duel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 1.35rem;
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.ms-duel-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ms-duel-caption {
+  font-size: 0.85rem;
+  opacity: 0.95;
+  text-align: center;
+  max-width: 32rem;
+  line-height: 1.3;
+}
+
+.ms-duel-caption__meta {
+  opacity: 0.82;
 }
 
 .ms-lobby-card__settings {
