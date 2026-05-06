@@ -141,7 +141,10 @@
               :highlighted-cells="isLobbyHost ? highlightedCells : emptyHighlightSet"
               :dev-mode="isLobbyHost ? effectiveDevMode : false"
               :read-only="!isLobbyHost"
-              v-on="hostSeatInteract"
+              @cell-open="(r, c) => onDuelCellOpen('host', r, c)"
+              @cell-mark="(r, c) => onDuelCellMark('host', r, c)"
+              @cell-highlight="(r, c) => onDuelCellHighlight('host', r, c)"
+              @clear-highlight="() => onDuelClearHighlight('host')"
           />
         </div>
         <div class="ms-duel-col ms-duel-col--guest" :class="{ 'ms-duel-col--interactive': !isLobbyHost }">
@@ -160,7 +163,10 @@
               :highlighted-cells="!isLobbyHost ? highlightedCells : emptyHighlightSet"
               :dev-mode="!isLobbyHost ? effectiveDevMode : false"
               :read-only="isLobbyHost"
-              v-on="guestSeatInteract"
+              @cell-open="(r, c) => onDuelCellOpen('guest', r, c)"
+              @cell-mark="(r, c) => onDuelCellMark('guest', r, c)"
+              @cell-highlight="(r, c) => onDuelCellHighlight('guest', r, c)"
+              @clear-highlight="() => onDuelClearHighlight('guest')"
           />
         </div>
       </div>
@@ -204,7 +210,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onBeforeUnmount, onMounted } from 'vue'
 import { useSettings } from '@/composables/useSettings'
 import { api } from '@/services/api'
 import { store } from '@/store'
@@ -441,10 +447,48 @@ const gameStyle = computed(() => ({
 }))
 
 const cloneCells = (b: MinesweeperCell[][]): MinesweeperCell[][] => {
+  if (!b?.length) return []
   try {
+    if (typeof structuredClone === 'function') {
+      return structuredClone(b) as MinesweeperCell[][]
+    }
     return JSON.parse(JSON.stringify(b)) as MinesweeperCell[][]
   } catch {
-    return b
+    try {
+      return JSON.parse(JSON.stringify(b)) as MinesweeperCell[][]
+    } catch {
+      return []
+    }
+  }
+}
+
+const ONLINE_MS_SESSION_KEY = 'swepp-ms-online-v1'
+
+const persistOnlineSessionSnapshot = () => {
+  try {
+    if (onlineMatchId.value && gameId.value && onlineLobby.value?.id) {
+      sessionStorage.setItem(
+        ONLINE_MS_SESSION_KEY,
+        JSON.stringify({
+          lobbyId: onlineLobby.value.id,
+          matchId: onlineMatchId.value,
+          myGameId: gameId.value,
+          pinnedOpponentUserId: pinnedOpponentUserId.value || undefined
+        })
+      )
+    } else {
+      sessionStorage.removeItem(ONLINE_MS_SESSION_KEY)
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+const clearOnlineSessionSnapshot = () => {
+  try {
+    sessionStorage.removeItem(ONLINE_MS_SESSION_KEY)
+  } catch {
+    /* ignore */
   }
 }
 
@@ -498,6 +542,7 @@ const loadOnlineMatchFromStartResponse = async (started: StartMatchResponse) => 
   const myState = await api.getMinesweeperGame(started.myGameId, effectiveDevMode.value)
   applyGameState(myState)
   await refreshOpponentState()
+  persistOnlineSessionSnapshot()
 }
 
 const createGame = async (params: { rows: number; cols: number; mines: number; seed?: number }) => {
@@ -535,6 +580,8 @@ const connectLobbyWs = (lobbyId: string) => {
       } else if (msg.event === 'player_move' && onlineMatchId.value) {
         const mid = (msg.payload as { matchId?: string })?.matchId
         if (mid && mid !== onlineMatchId.value) return
+        const moverId = (msg.payload as { userId?: string })?.userId
+        if (moverId && moverId === myUserId.value) return
         await refreshOpponentState()
       } else if (msg.event === 'match_finished') {
         isLeavingGame.value = false
@@ -702,6 +749,7 @@ const syncOnlineField = async () => {
     const myState = await api.getMinesweeperGame(gameId.value, effectiveDevMode.value)
     applyGameState(myState)
     await refreshOpponentState()
+    persistOnlineSessionSnapshot()
     flashSyncFieldFeedback('Поля обновлены')
   } catch (e) {
     console.error(e)
@@ -714,6 +762,7 @@ const syncOnlineField = async () => {
 const backToLobbyAfterMatch = async () => {
   matchEndVisible.value = false
   matchEndWinnerId.value = null
+  clearOnlineSessionSnapshot()
   if (!onlineLobby.value?.id) return
   try {
     const refreshed = await api.prepareOnlineLobbyNextRound(onlineLobby.value.id)
@@ -742,6 +791,7 @@ const backToLobbyAfterMatch = async () => {
 const backToMenu = async () => {
   isLeavingGame.value = true
   stopPlayTick()
+  clearOnlineSessionSnapshot()
   onlineWs.value?.close()
   onlineWs.value = null
   showMenu.value = true
@@ -815,29 +865,92 @@ const clearHighlight = () => {
   highlightedCells.value.clear()
 }
 
-const hostSeatInteract = computed(() =>
-  !isLobbyHost.value
-    ? {}
-    : {
-        onCellOpen: handleCellOpen,
-        onCellMark: handleCellMark,
-        onCellHighlight: highlightNeighbors,
-        onClearHighlight: clearHighlight
-      }
-)
+/** Левое место = owner лобби (player1 на сервере); совпадает с колонкой «хост». */
+const myInteractiveSeat = computed<'host' | 'guest'>(() => {
+  const me = myUserId.value
+  if (!me) return 'host'
+  let oid = seatOwnerUserId.value
+  if (!oid && onlineLobby.value?.players?.length) {
+    oid = onlineLobby.value.players[0].userId
+  }
+  if (!oid) return 'host'
+  return oid === me ? 'host' : 'guest'
+})
 
-const guestSeatInteract = computed(() =>
-  isLobbyHost.value
-    ? {}
-    : {
-        onCellOpen: handleCellOpen,
-        onCellMark: handleCellMark,
-        onCellHighlight: highlightNeighbors,
-        onClearHighlight: clearHighlight
-      }
-)
+const onDuelCellOpen = (seat: 'host' | 'guest', row: number, col: number) => {
+  if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
+  handleCellOpen(row, col)
+}
+
+const onDuelCellMark = (seat: 'host' | 'guest', row: number, col: number) => {
+  if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
+  handleCellMark(row, col)
+}
+
+const onDuelCellHighlight = (seat: 'host' | 'guest', row: number, col: number) => {
+  if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
+  highlightNeighbors(row, col)
+}
+
+const onDuelClearHighlight = (seat: 'host' | 'guest') => {
+  if (!onlineMatchId.value || seat !== myInteractiveSeat.value) return
+  clearHighlight()
+}
+
+const tryRestoreOnlineSession = async () => {
+  if (!store.getters.isAuthenticated) return
+  let raw: string | null = null
+  try {
+    raw = sessionStorage.getItem(ONLINE_MS_SESSION_KEY)
+  } catch {
+    return
+  }
+  if (!raw) return
+  let parsed: { lobbyId: string; matchId: string; myGameId: string; pinnedOpponentUserId?: string }
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    clearOnlineSessionSnapshot()
+    return
+  }
+  try {
+    const lobby = await api.getOnlineLobby(parsed.lobbyId)
+    onlineLobby.value = lobby
+    syncHostEditor()
+    syncPinnedOpponentFromLobby()
+    if (parsed.pinnedOpponentUserId) pinnedOpponentUserId.value = parsed.pinnedOpponentUserId
+
+    onlineMatchId.value = parsed.matchId
+    gameId.value = parsed.myGameId
+    isLeavingGame.value = false
+
+    const myState = await api.getMinesweeperGame(parsed.myGameId, effectiveDevMode.value)
+    applyGameState(myState)
+    await refreshOpponentState()
+
+    showMenu.value = false
+    connectLobbyWs(parsed.lobbyId)
+    persistOnlineSessionSnapshot()
+  } catch (e) {
+    console.error('restore online session failed', e)
+    clearOnlineSessionSnapshot()
+    onlineLobby.value = null
+    onlineMatchId.value = null
+    gameId.value = null
+    board.value = []
+    opponentBoard.value = []
+  }
+}
 
 onBeforeUnmount(() => stopPlayTick())
+
+onMounted(() => {
+  void tryRestoreOnlineSession()
+})
+
+watch([onlineMatchId, gameId, pinnedOpponentUserId, () => onlineLobby.value?.id], () =>
+  persistOnlineSessionSnapshot()
+)
 
 watch(gameStatus, async (status) => {
   if (onlineMatchId.value && myUserId.value) {
